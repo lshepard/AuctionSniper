@@ -26,6 +26,7 @@
 
 - (void) showJoiningStatus;
 - (void) showLostStatus;
+- (void) priceChangedwithCurrentPrice:(int)currentPrice increment:(int)increment bidder:(NSString*)bidder;
 - (NSString*) auctionItemJid;
 - (NSString*) jid;
 - (NSString*) jidForUser: (NSString*) aUser atHost: (NSString*) aHost;
@@ -40,14 +41,30 @@ int HandleXmppMessage(xmpp_conn_t * const conn, xmpp_stanza_t * const stanza, vo
     size_t buf_len = 0;
     xmpp_stanza_to_text(stanza, &buf, &buf_len);
     NSLog(@"received message: %s", buf);
+    char *cbody = xmpp_stanza_get_text(xmpp_stanza_get_child_by_name(stanza, "body"));
+    NSLog(@"body: %s", cbody);
     
     //update the status in the UI, which has to be done on the main thread;
     //we are running in the context of xmpp_run which is in a GCD block on
     //some other queue.
     dispatch_async(dispatch_get_main_queue(), ^{
         GASViewController *controller = (__bridge GASViewController*) userdata;
-        [controller showLostStatus];
-    });    
+        // look in the message contents -- buf
+        // detect these two events:)
+        NSString *body = [NSString stringWithCString:cbody encoding:NSUTF8StringEncoding];
+        NSArray *components = [body componentsSeparatedByString:@";"];
+        NSString *messageType = [components[1] componentsSeparatedByString:@": "][1];
+        
+        if ([messageType isEqual: @"CLOSE"]) {
+           [controller showLostStatus];
+        } else if ([messageType isEqual: @"PRICE"]) {
+            NSString *currentPrice = [components[2] componentsSeparatedByString:@": "][1];
+            NSString *increment = [components[3] componentsSeparatedByString:@": "][1];
+            NSString *bidder = [components[4] componentsSeparatedByString:@": "][1];
+            
+            [controller priceChangedwithCurrentPrice:[currentPrice intValue] increment:[increment intValue] bidder:bidder];
+        }
+    });
     return 1;
 }
 
@@ -164,13 +181,17 @@ void HandleXmppConnectionStatusChanges(xmpp_conn_t *const conn,
     xmpp_stanza_t *body = xmpp_stanza_new(xmpp_ctx);
     xmpp_stanza_set_name(body, "body");
     xmpp_stanza_t *text = xmpp_stanza_new(xmpp_ctx);
-    xmpp_stanza_set_text(text, "");
+    xmpp_stanza_set_text(text, "SOLVersion: 1.1; Command: JOIN;");
     xmpp_stanza_add_child(body, text);
     xmpp_stanza_add_child(joinRequest, body);
     xmpp_send(xmpp_conn, joinRequest);
     xmpp_stanza_release(joinRequest);
     NSLog(@"sent join request.");
-    
+}
+
+- (void)sendJoinRequest
+{
+
 }
 
 
@@ -202,6 +223,11 @@ void HandleXmppConnectionStatusChanges(xmpp_conn_t *const conn,
 - (void) showLostStatus
 {
     [self.statusLabel setText: @"Lost"];
+}
+
+- (void) priceChangedwithCurrentPrice:(int)currentPrice increment:(int)increment bidder:(NSString*)bidder
+{
+    [self.statusLabel setText: [NSString stringWithFormat:@"Received Price %d %d %@", currentPrice, increment, bidder]];
 }
 
 @end
